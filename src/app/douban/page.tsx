@@ -288,8 +288,6 @@ function DoubanPageClient() {
                 secondarySelection={secondarySelection}
                 onPrimaryChange={handlePrimaryChange}
                 onSecondaryChange={handleSecondaryChange}
-                onMultiLevelChange={handleMultiLevelChange}
-                onWeekdayChange={handleWeekdayChange}
               />
             </div>
           )}
