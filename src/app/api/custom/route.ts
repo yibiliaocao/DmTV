@@ -1,6 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any,no-console */
 import { NextRequest, NextResponse } from 'next/server';
-
 import { getAuthInfoFromCookie } from '@/lib/auth';
 import { getConfig, getAvailableApiSites, getCacheTime } from '@/lib/config';
 import { searchFromApi } from '@/lib/downstream';
@@ -34,7 +33,7 @@ export async function GET(request: NextRequest) {
   const config = await getConfig();
   const apiSites = await getAvailableApiSites(authInfo.username);
 
-  // 🔑 支持 query = 某个资源站 key，直接调用该资源站
+  // 🔑 根据 query 作为 key 调用对应资源站
   const site = apiSites.find((s) => s.key === query);
 
   let results: any[] = [];
@@ -75,12 +74,8 @@ export async function GET(request: NextRequest) {
 
   const cacheTime = await getCacheTime();
 
-  if (results.length === 0) {
-    return NextResponse.json({ results: [] }, { status: 200 });
-  }
-
   return NextResponse.json(
-    { results },
+    { list: results },
     {
       headers: {
         'Cache-Control': `public, max-age=${cacheTime}, s-maxage=${cacheTime}`,
