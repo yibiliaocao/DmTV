@@ -137,47 +137,60 @@ function DoubanPageClient() {
     []
   );
 
-  const loadInitialData = useCallback(async () => {
-    const requestSnapshot = { ...currentParamsRef.current, currentPage: 0 };
-    try {
-      setLoading(true);
-      setDoubanData([]);
-      setCurrentPage(0);
-      setHasMore(true);
-      setIsLoadingMore(false);
+const loadInitialData = useCallback(async () => {
+  const requestSnapshot = { ...currentParamsRef.current, currentPage: 0 };
+  try {
+    setLoading(true);
+    setDoubanData([]);
+    setCurrentPage(0);
+    setHasMore(true);
+    setIsLoadingMore(false);
 
-      let data: DoubanResult;
-      if (type === 'custom') {
-        const res = await fetch(`/api/custom?query=${secondarySelection}`);
-		const json = await res.json();
-        data = { 
-          code: 1,
-          message: 'ok',
-          list: json.results || []
-		  };
-        if (!data.list) data.list = [];
-      } else {
-        data = await getDoubanCategories({ kind: type as 'movie' | 'tv', category: primarySelection, type: secondarySelection, pageLimit: 25, pageStart: 0 });
-      }
+    let data: DoubanResult;
+    if (type === 'custom') {
+      const res = await fetch(`/api/custom?query=${secondarySelection}`);
+      const json = await res.json();
+      // 保证返回值符合 DoubanResult 类型
+      data = {
+        code: 1,
+        message: 'success',
+        list: Array.isArray(json.results) ? json.results : [],
+      };
+    } else {
+      data = await getDoubanCategories({
+        kind: type as 'movie' | 'tv',
+        category: primarySelection,
+        type: secondarySelection,
+        pageLimit: 25,
+        pageStart: 0,
+      });
+    }
 
-      const currentSnapshot = { ...currentParamsRef.current };
-      if (isSnapshotEqual(requestSnapshot, currentSnapshot)) {
-        setDoubanData(data.list);
-        setHasMore(data.list.length !== 0);
-        setLoading(false);
-      }
-    } catch (err) {
-      console.error(err);
+    const currentSnapshot = { ...currentParamsRef.current };
+    if (isSnapshotEqual(requestSnapshot, currentSnapshot)) {
+      setDoubanData(data.list);
+      setHasMore(data.list.length !== 0);
       setLoading(false);
     }
-  }, [type, primarySelection, secondarySelection, isSnapshotEqual]);
+  } catch (err) {
+    console.error(err);
+    setLoading(false);
+  }
+}, [type, primarySelection, secondarySelection, isSnapshotEqual]);
 
-  useEffect(() => {
-    if (!selectorsReady) return;
-    if (debounceTimeoutRef.current) clearTimeout(debounceTimeoutRef.current);
-    debounceTimeoutRef.current = setTimeout(loadInitialData, 100);
-    return () => debounceTimeoutRef.current && clearTimeout(debounceTimeoutRef.current);
-  }, [selectorsReady, loadInitialData]);
+useEffect(() => {
+  if (!selectorsReady) return;
+
+  if (debounceTimeoutRef.current) clearTimeout(debounceTimeoutRef.current);
+  debounceTimeoutRef.current = setTimeout(loadInitialData, 100);
+
+  return () => {
+    if (debounceTimeoutRef.current) {
+      clearTimeout(debounceTimeoutRef.current);
+    }
+  };
+}, [selectorsReady, loadInitialData]);
+
 
   const handlePrimaryChange = useCallback(
     (value: string) => {
