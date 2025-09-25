@@ -150,7 +150,11 @@ function DoubanPageClient() {
       if (type === 'custom') {
         const res = await fetch(`/api/custom?query=${secondarySelection}`);
 		const json = await res.json();
-        data = { list: json.results || [] };
+        data = { 
+          code: 1,
+          message: 'ok',
+          list: json.results || []
+		  };
         if (!data.list) data.list = [];
       } else {
         data = await getDoubanCategories({ kind: type as 'movie' | 'tv', category: primarySelection, type: secondarySelection, pageLimit: 25, pageStart: 0 });
