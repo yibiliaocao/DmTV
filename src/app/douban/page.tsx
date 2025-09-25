@@ -149,8 +149,9 @@ function DoubanPageClient() {
       let data: DoubanResult;
       if (type === 'custom') {
         const res = await fetch(`/api/custom?query=${secondarySelection}`);
-        data = await res.json();
-        if (!data.list) data.list = data.results || [];
+		const json = await res.json();
+        data = { list: json.results || [] };
+        if (!data.list) data.list = [];
       } else {
         data = await getDoubanCategories({ kind: type as 'movie' | 'tv', category: primarySelection, type: secondarySelection, pageLimit: 25, pageStart: 0 });
       }
