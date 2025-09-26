@@ -1,313 +1,234 @@
-/* eslint-disable no-console,react-hooks/exhaustive-deps,@typescript-eslint/no-explicit-any */
+/* eslint-disable @typescript-eslint/no-explicit-any, react-hooks/exhaustive-deps, no-console */
 
 'use client';
 
-import { useSearchParams } from 'next/navigation';
-import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
-
-import { GetBangumiCalendarData } from '@/lib/bangumi.client';
-import { getDoubanCategories, getDoubanRecommends } from '@/lib/douban.client';
-import { DoubanItem, DoubanResult } from '@/lib/types';
-
-import DoubanCardSkeleton from '@/components/DoubanCardSkeleton';
+import { ChevronRight } from 'lucide-react';
+import Link from 'next/link';
+import { useEffect, useState, useRef } from 'react';
 import DoubanCustomSelector from '@/components/DoubanCustomSelector';
-import DoubanSelector from '@/components/DoubanSelector';
-import PageLayout from '@/components/PageLayout';
-import VideoCard from '@/components/VideoCard';
+import VideoCard, { VideoCardHandle } from '@/components/VideoCard';
+import { DoubanItem } from '@/lib/types';
+import { fetchFromApi } from '@/lib/downstream';
 
-function DoubanPageClient() {
-  const searchParams = useSearchParams();
+export default function Page() {
   const [doubanData, setDoubanData] = useState<DoubanItem[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [currentPage, setCurrentPage] = useState(0);
+  const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
-  const [selectorsReady, setSelectorsReady] = useState(false);
-  const observerRef = useRef<IntersectionObserver | null>(null);
-  const loadingRef = useRef<HTMLDivElement>(null);
-  const debounceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const [loading, setLoading] = useState(false);
 
-  const currentParamsRef = useRef({
-    type: '',
-    primarySelection: '',
-    secondarySelection: '',
-    multiLevelSelection: {} as Record<string, string>,
-    selectedWeekday: '',
-    currentPage: 0,
-  });
-
-  const type = searchParams.get('type') || 'movie';
-
+  const [type, setType] = useState<'movie' | 'tv' | 'custom'>('movie');
+  const [primarySelection, setPrimarySelection] = useState('');
+  const [secondarySelection, setSecondarySelection] = useState('');
+  const [weekday, setWeekday] = useState('');
   const [customCategories, setCustomCategories] = useState<
-    Array<{ name: string; type: 'movie' | 'tv'; query: string }>
+    { name: string; type: 'movie' | 'tv'; query: string }[]
   >([]);
 
-  const [primarySelection, setPrimarySelection] = useState<string>('');
-  const [secondarySelection, setSecondarySelection] = useState<string>('');
-  const [multiLevelValues, setMultiLevelValues] = useState<Record<string, string>>({
-    type: 'all',
-    region: 'all',
-    year: 'all',
-    platform: 'all',
-    label: 'all',
-    sort: 'T',
-  });
-  const [selectedWeekday, setSelectedWeekday] = useState<string>('');
+  const observerRef = useRef<IntersectionObserver | null>(null);
+  const loadMoreRef = useRef<HTMLDivElement | null>(null);
 
-  useEffect(() => {
-    const runtimeConfig = (window as any).RUNTIME_CONFIG;
-    if (runtimeConfig?.CUSTOM_CATEGORIES?.length > 0) {
-      setCustomCategories(runtimeConfig.CUSTOM_CATEGORIES);
-    }
-  }, []);
-
-  useEffect(() => {
-    currentParamsRef.current = {
-      type,
-      primarySelection,
-      secondarySelection,
-      multiLevelSelection: multiLevelValues,
-      selectedWeekday,
-      currentPage,
-    };
-  }, [type, primarySelection, secondarySelection, multiLevelValues, selectedWeekday, currentPage]);
-
-  useEffect(() => {
-    setSelectorsReady(false);
+  // 原始加载函数，加入 custom 分类支持
+  const loadInitialData = async (
+    reset: boolean = false,
+    customCategory?: { name: string; type: 'movie' | 'tv'; query: string }
+  ) => {
     setLoading(true);
-  }, [type]);
 
-  useEffect(() => {
-    if (type === 'custom' && customCategories.length > 0) {
-      const types = Array.from(new Set(customCategories.map((cat) => cat.type)));
-      if (types.length > 0) {
-        const selectedType = types.includes('movie') ? 'movie' : 'tv';
-        setPrimarySelection(selectedType);
-
-        const firstCategory = customCategories.find((cat) => cat.type === selectedType);
-        if (firstCategory) {
-          setSecondarySelection(firstCategory.query);
-        }
-      }
-    } else {
-      if (type === 'movie') {
-        setPrimarySelection('热门');
-        setSecondarySelection('全部');
-      } else if (type === 'tv') {
-        setPrimarySelection('最近热门');
-        setSecondarySelection('tv');
-      } else if (type === 'show') {
-        setPrimarySelection('最近热门');
-        setSecondarySelection('show');
-      } else if (type === 'anime') {
-        setPrimarySelection('每日放送');
-        setSecondarySelection('全部');
-      } else {
-        setPrimarySelection('');
-        setSecondarySelection('全部');
-      }
-    }
-
-    setMultiLevelValues({
-      type: 'all',
-      region: 'all',
-      year: 'all',
-      platform: 'all',
-      label: 'all',
-      sort: 'T',
-    });
-
-    const timer = setTimeout(() => {
-      setSelectorsReady(true);
-    }, 50);
-
-    return () => clearTimeout(timer);
-  }, [type, customCategories]);
-
-  const skeletonData = Array.from({ length: 25 }, (_, index) => index);
-
-  const isSnapshotEqual = useCallback(
-    (snapshot1: typeof currentParamsRef.current, snapshot2: typeof currentParamsRef.current) =>
-      snapshot1.type === snapshot2.type &&
-      snapshot1.primarySelection === snapshot2.primarySelection &&
-      snapshot1.secondarySelection === snapshot2.secondarySelection &&
-      snapshot1.selectedWeekday === snapshot2.selectedWeekday &&
-      snapshot1.currentPage === snapshot2.currentPage &&
-      JSON.stringify(snapshot1.multiLevelSelection) === JSON.stringify(snapshot2.multiLevelSelection),
-    []
-  );
-
-  // 保留原始回调
-  const handleMultiLevelChange = useCallback((values: Record<string, string>) => {
-    setMultiLevelValues(values);
-    setCurrentPage(0);
-    setDoubanData([]);
-    setHasMore(true);
-    setIsLoadingMore(false);
-  }, []);
-
-  const handleWeekdayChange = useCallback((weekday: string) => {
-    setSelectedWeekday(weekday);
-    setCurrentPage(0);
-    setDoubanData([]);
-    setHasMore(true);
-    setIsLoadingMore(false);
-  }, []);
-
-  const loadInitialData = useCallback(async () => {
-    const requestSnapshot = { ...currentParamsRef.current, currentPage: 0 };
     try {
-      setLoading(true);
-      setDoubanData([]);
-      setCurrentPage(0);
-      setHasMore(true);
-      setIsLoadingMore(false);
-
-      let data: DoubanResult;
-      if (type === 'custom') {
-        const res = await fetch(`/api/custom?query=${secondarySelection}`);
-        const json = await res.json();
-        data = {
-          code: 1,
-          message: 'success',
-          list: json.results || [],
-        };
-      } else {
-        data = await getDoubanCategories({
-          kind: type as 'movie' | 'tv',
-          category: primarySelection,
-          type: secondarySelection,
-          pageLimit: 25,
-          pageStart: 0,
+      let result: DoubanItem[] = [];
+      if (type === 'custom' && customCategory) {
+        const res = await fetchFromApi({
+          apiUrl: customCategory.query,
+          page: reset ? 1 : page,
         });
+        result = res?.items || [];
+      } else {
+        const res = await fetchFromApi({
+          type,
+          category: primarySelection,
+          subcategory: secondarySelection,
+          weekday,
+          page: reset ? 1 : page,
+        });
+        result = res?.items || [];
       }
 
-      const currentSnapshot = { ...currentParamsRef.current };
-      if (isSnapshotEqual(requestSnapshot, currentSnapshot)) {
-        setDoubanData(data.list);
-        setHasMore(data.list.length !== 0);
-        setLoading(false);
+      if (reset) {
+        setDoubanData(result);
+        setPage(2);
+      } else {
+        setDoubanData((prev) => [...prev, ...result]);
+        setPage((prev) => prev + 1);
       }
-    } catch (err) {
-      console.error(err);
+      setHasMore(result.length > 0);
+    } catch (error) {
+      console.error('加载数据失败', error);
+    } finally {
       setLoading(false);
     }
-  }, [type, primarySelection, secondarySelection, isSnapshotEqual]);
+  };
 
+  // 监听分类配置
   useEffect(() => {
-    if (!selectorsReady) return;
-    if (debounceTimeoutRef.current) clearTimeout(debounceTimeoutRef.current);
-    debounceTimeoutRef.current = setTimeout(() => {
-      loadInitialData();
-    }, 100);
-    return () => {
-      if (debounceTimeoutRef.current) clearTimeout(debounceTimeoutRef.current);
-    };
-  }, [selectorsReady, loadInitialData]);
+    if (typeof window !== 'undefined' && (window as any).RUNTIME_CONFIG) {
+      const cfg = (window as any).RUNTIME_CONFIG;
+      if (cfg?.customCategories) {
+        setCustomCategories(cfg.customCategories);
+      }
+    }
+  }, []);
 
-  const handlePrimaryChange = useCallback(
-    (value: string) => {
-      if (value !== primarySelection) {
-        setLoading(true);
-        setCurrentPage(0);
-        setDoubanData([]);
-        setHasMore(true);
-        setIsLoadingMore(false);
+  // 选择变化时重新加载
+  useEffect(() => {
+    if (type === 'custom') {
+      const selected = customCategories.find((c) => c.name === primarySelection);
+      if (selected) {
+        loadInitialData(true, selected);
+      }
+    } else {
+      loadInitialData(true);
+    }
+  }, [type, primarySelection, secondarySelection, weekday]);
 
-        setMultiLevelValues({
-          type: 'all',
-          region: 'all',
-          year: 'all',
-          platform: 'all',
-          label: 'all',
-          sort: 'T',
-        });
+  // 加载更多
+  useEffect(() => {
+    if (!loadMoreRef.current) return;
+    if (observerRef.current) observerRef.current.disconnect();
 
-        if (type === 'custom' && customCategories.length > 0) {
-          const firstCategory = customCategories.find((cat) => cat.type === value);
-          if (firstCategory) {
-            setPrimarySelection(value);
-            setSecondarySelection(firstCategory.query);
+    observerRef.current = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && hasMore && !loading) {
+          if (type === 'custom') {
+            const selected = customCategories.find((c) => c.name === primarySelection);
+            if (selected) {
+              loadInitialData(false, selected);
+            }
           } else {
-            setPrimarySelection(value);
+            loadInitialData();
           }
-        } else {
-          setPrimarySelection(value);
         }
-      }
-    },
-    [primarySelection, type, customCategories]
-  );
+      },
+      { threshold: 1.0 }
+    );
 
-  const handleSecondaryChange = useCallback(
-    (value: string) => {
-      if (value !== secondarySelection) {
-        setLoading(true);
-        setCurrentPage(0);
-        setDoubanData([]);
-        setHasMore(true);
-        setIsLoadingMore(false);
-        setSecondarySelection(value);
-      }
-    },
-    [secondarySelection]
-  );
+    observerRef.current.observe(loadMoreRef.current);
 
-  const getPageTitle = () => (type === 'movie' ? '电影' : type === 'tv' ? '电视剧' : type === 'anime' ? '动漫' : type === 'show' ? '综艺' : '自定义');
-  const getPageDescription = () => (type === 'anime' && primarySelection === '每日放送' ? '来自 Bangumi 番组计划的精选内容' : '来自豆瓣的精选内容');
-  const getActivePath = () => `/douban${type ? `?type=${type}` : ''}`;
+    return () => {
+      if (observerRef.current) observerRef.current.disconnect();
+    };
+  }, [hasMore, loading, type, primarySelection, secondarySelection, weekday]);
+
+  const handlePrimaryChange = (value: string) => {
+    setPrimarySelection(value);
+    setSecondarySelection('');
+    setPage(1);
+    setDoubanData([]);
+  };
+
+  const handleSecondaryChange = (value: string) => {
+    setSecondarySelection(value);
+    setPage(1);
+    setDoubanData([]);
+  };
+
+  const handleWeekdayChange = (day: string) => {
+    setWeekday(day);
+    setPage(1);
+    setDoubanData([]);
+  };
 
   return (
-    <PageLayout activePath={getActivePath()}>
-      <div className='px-4 sm:px-10 py-4 sm:py-8 overflow-visible'>
-        <div className='mb-6 sm:mb-8 space-y-4 sm:space-y-6'>
-          <div>
-            <h1 className='text-2xl sm:text-3xl font-bold text-gray-800 mb-1 sm:mb-2 dark:text-gray-200'>
-              {getPageTitle()}
-            </h1>
-            <p className='text-sm sm:text-base text-gray-600 dark:text-gray-400'>{getPageDescription()}</p>
-          </div>
+    <div className="flex h-screen overflow-hidden">
+      {/* 左侧分类选择 */}
+      <div className="w-64 border-r border-gray-200 dark:border-gray-700 p-4 overflow-y-auto">
+        <h2 className="text-lg font-semibold mb-4">分类</h2>
+        <div className="space-y-2">
+          <button
+            className={`block w-full text-left px-2 py-1 rounded ${
+              type === 'movie'
+                ? 'bg-blue-500 text-white'
+                : 'hover:bg-gray-200 dark:hover:bg-gray-700'
+            }`}
+            onClick={() => setType('movie')}
+          >
+            电影
+          </button>
+          <button
+            className={`block w-full text-left px-2 py-1 rounded ${
+              type === 'tv'
+                ? 'bg-blue-500 text-white'
+                : 'hover:bg-gray-200 dark:hover:bg-gray-700'
+            }`}
+            onClick={() => setType('tv')}
+          >
+            电视剧
+          </button>
+          {customCategories.length > 0 && (
+            <>
+              <h3 className="mt-4 mb-2 text-sm font-medium text-gray-500 dark:text-gray-400">
+                自定义分类
+              </h3>
+              {customCategories.map((cat) => (
+                <button
+                  key={cat.name}
+                  className={`block w-full text-left px-2 py-1 rounded ${
+                    type === 'custom' && primarySelection === cat.name
+                      ? 'bg-blue-500 text-white'
+                      : 'hover:bg-gray-200 dark:hover:bg-gray-700'
+                  }`}
+                  onClick={() => {
+                    setType('custom');
+                    handlePrimaryChange(cat.name);
+                  }}
+                >
+                  {cat.name}
+                </button>
+              ))}
+            </>
+          )}
+        </div>
+      </div>
 
-          {type !== 'custom' ? (
-            <div className='bg-white/60 dark:bg-gray-800/40 rounded-2xl p-4 sm:p-6 border border-gray-200/30 dark:border-gray-700/30 backdrop-blur-sm'>
-              <DoubanSelector
-                type={type as 'movie' | 'tv' | 'show' | 'anime'}
-                primarySelection={primarySelection}
-                secondarySelection={secondarySelection}
-                onPrimaryChange={handlePrimaryChange}
-                onSecondaryChange={handleSecondaryChange}
-                onMultiLevelChange={handleMultiLevelChange}
-                onWeekdayChange={handleWeekdayChange}
-              />
+      {/* 右侧内容区 */}
+      <div className="flex-1 overflow-y-auto p-6">
+        <div className="flex items-center mb-6">
+          <Link href="/" className="text-blue-500 hover:underline">
+            首页
+          </Link>
+          <ChevronRight className="mx-2 h-4 w-4 text-gray-400" />
+          <span className="text-gray-700 dark:text-gray-300">豆瓣推荐</span>
+        </div>
+
+        <div className="mb-4">
+          <DoubanCustomSelector
+            customCategories={customCategories}
+            primarySelection={primarySelection}
+            secondarySelection={secondarySelection}
+            onPrimaryChange={handlePrimaryChange}
+            onSecondaryChange={handleSecondaryChange}
+            onWeekdayChange={handleWeekdayChange}
+          />
+        </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
+          {doubanData.length === 0 && !loading ? (
+            <div className="col-span-full text-center text-gray-500">
+              暂无数据
             </div>
           ) : (
-            <div className='bg-white/60 dark:bg-gray-800/40 rounded-2xl p-4 sm:p-6 border border-gray-200/30 dark:border-gray-700/30 backdrop-blur-sm'>
-              <DoubanCustomSelector
-                customCategories={customCategories}
-                primarySelection={primarySelection}
-                secondarySelection={secondarySelection}
-                onPrimaryChange={handlePrimaryChange}
-                onSecondaryChange={handleSecondaryChange}
-              />
-            </div>
+            doubanData.map((item, index) => (
+              <div key={`${item.title}-${index}`} className="w-full">
+                <VideoCard data={item} />
+              </div>
+            ))
           )}
         </div>
 
-        <div className='max-w-[95%] mx-auto mt-8 overflow-visible'>
-          <div className='justify-start grid grid-cols-3 gap-x-2 gap-y-12 px-0 sm:px-2 sm:grid-cols-[repeat(auto-fill,minmax(160px,1fr))] sm:gap-x-8 sm:gap-y-20'>
-            {loading || !selectorsReady
-              ? skeletonData.map((index) => <DoubanCardSkeleton key={index} />)
-              : doubanData.map((item, index) => (
-                  <div key={`${item.title}-${index}`} className='w-full'>
-                    <VideoCard data={item} />
-                  </div>
-                ))}
-          </div>
-          <div ref={loadingRef} className='py-6'></div>
-        </div>
+        {loading && (
+          <div className="text-center py-4 text-gray-500">加载中...</div>
+        )}
+        <div ref={loadMoreRef} className="h-10"></div>
       </div>
-    </PageLayout>
+    </div>
   );
 }
-
-export default DoubanPageClient;
